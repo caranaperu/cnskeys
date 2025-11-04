@@ -1,0 +1,416 @@
+// loader (File: config.cpp)
+//
+// Copyright (c) 2023 Carlos Arana & Copyright (c) 2023 Justin Stenning
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// 
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+// 
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+// Please visit https://cnskeys.github.io for more information
+// about the project and latest updates.
+
+#include <stdint.h>
+
+#include "config.h"
+#include "stringutils.h"
+
+#define CFGERROR_FILEOPENERROR      1
+#define CFGERROR_FILESIZEERROR      2
+#define CFGERROR_READERROR          3
+#define CFGERROR_NOTENOUGHMEM		4
+#define CFGERROR_NOUTF8ENCODED		5
+#define CFGERROR_INVALIDDATA		6
+#define CFGERROR_PARSEERROR			7
+#define CFGERROR_WRITEERROR			8
+#define CFGERROR_NOTDEFAULTCONFIG	9
+
+
+static BOOL ProcessConfigLine(LPWSTR lpszParseLine);
+static BOOL ParseKeyStatus(LPWSTR lpszParseLine);
+static BOOL _WriteFileAsUtf8(HANDLE hFile, LPCWSTR lpszToWrite);
+
+/* Definición única de la variable global */
+CONFIG_KEYSTAT g_keyStatusConfig[3] = {
+	{ L"caps",   TRUE},
+	{ L"num",    TRUE},
+	{ L"scroll", TRUE}
+};
+
+
+
+INT LoadConfig(LPWSTR lpszPath) {
+	int iErrno = 0;
+	LPSTR lpszBuffer = NULL; // Buffer to store read data
+	DWORD dwBytesRead; // Number of bytes read
+
+	// If its null , use the default config file
+	if (lpszPath == NULL) {
+		lpszPath = GetDefaultConfigPath();
+	}
+
+	if (lpszPath == NULL) {
+		return CFGERROR_NOTDEFAULTCONFIG;
+	}
+
+	// Open the existing file
+	HANDLE hFile = CreateFile(
+		lpszPath,                   // File name
+		GENERIC_READ,               // Access mode (read-only)
+		FILE_SHARE_READ,            // Share mode
+		NULL,                       // Security attributes
+		OPEN_EXISTING,              // Open only if exists
+		FILE_ATTRIBUTE_NORMAL,      // File attributes
+		NULL                        // Template file (not used for existing files)
+	);
+
+	// freee memory
+	free(lpszPath);
+	lpszPath = NULL;
+
+
+	if (hFile == INVALID_HANDLE_VALUE) {
+		return CFGERROR_FILEOPENERROR;
+	}
+
+	// Get the file size
+	LARGE_INTEGER iFileSize;
+
+	if (GetFileSizeEx(hFile, &iFileSize) > 0) { // Read file contents
+		// Create a buffer
+		DWORD dwBufferSize = (DWORD)(iFileSize.QuadPart + 1);
+		lpszBuffer = (LPSTR)calloc(1, dwBufferSize);
+
+
+		if (lpszBuffer != NULL) {
+			BOOL bResult = ReadFile(
+				hFile,                  // File handle
+				lpszBuffer,                 // Buffer to store data
+				dwBufferSize - 1,        // Number of bytes to read (-1 to leave space for null-terminator)
+				&dwBytesRead,           // Number of bytes read
+				NULL                    // Overlapped (not used here)
+			);
+
+			if (bResult) {
+				if (dwBytesRead > 0) {
+					lpszBuffer[dwBytesRead - 1] = '\0'; // Null-terminate the buffer
+
+					// is utf-8 encoded? (required)
+					if ((uint8_t)lpszBuffer[0] == (uint8_t)0xEF && (uint8_t)lpszBuffer[1] == (uint8_t)0xBB && (uint8_t)lpszBuffer[2] == (unsigned char)0xBF) {
+						// Convert UTF-8 to UTF-16 (wide character)
+						int wcharCount = MultiByteToWideChar(CP_UTF8, 0, lpszBuffer, dwBytesRead, NULL, 0);
+						// get wide char buffer
+						LPWSTR lpszWideBuffer = (LPWSTR)calloc(1, wcharCount * sizeof(WCHAR));
+
+						if (lpszWideBuffer) {
+							// skip bom header ( +3)
+							MultiByteToWideChar(CP_UTF8, 0, lpszBuffer + 3, dwBytesRead, lpszWideBuffer, wcharCount);
+
+							free(lpszBuffer);
+							lpszBuffer = NULL;
+
+							// Split the buffer into lines and store them
+							WCHAR* lpszNextToken = NULL;
+							LPWSTR lpszToken = wcstok_s(lpszWideBuffer, L"\n", &lpszNextToken);
+							while (lpszToken != NULL && iErrno == 0) {
+								// IF begin with -- , skip
+								if (!startsWith(lpszToken, L"--")) {
+									if (!ProcessConfigLine(lpszToken)) {
+										iErrno = CFGERROR_PARSEERROR;
+									}
+
+								}
+
+								lpszToken = wcstok_s(NULL, L"\n", &lpszNextToken);
+							}
+
+							free(lpszWideBuffer);
+							lpszWideBuffer = NULL;
+						}
+						else {
+							iErrno = CFGERROR_NOTENOUGHMEM;
+						}
+					}
+					else {
+						iErrno = CFGERROR_NOUTF8ENCODED;
+					}
+				}
+				else {
+					iErrno = CFGERROR_INVALIDDATA;
+				}
+			}
+			else {
+				iErrno = CFGERROR_READERROR;
+			}
+		}
+		else {
+			iErrno = CFGERROR_NOTENOUGHMEM;
+		}
+	}
+	else {
+		iErrno = CFGERROR_FILESIZEERROR;
+	}
+
+	// Clean stuff
+	if (lpszBuffer != NULL) {
+		free(lpszBuffer);
+	}
+
+	// Close the file handle
+	if (hFile) {
+		CloseHandle(hFile);
+	}
+
+	return iErrno;
+}
+
+
+
+
+static BOOL ProcessConfigLine(LPWSTR lpszParseLine) {
+	if (startsWith(lpszParseLine, KEYSTAT_PREFIX)) {
+		if (!ParseKeyStatus(lpszParseLine)) {
+			return FALSE;
+		}
+	}
+
+	return TRUE;
+}
+
+static BOOL ParseKeyStatus(LPWSTR lpszParseLine) {
+	WCHAR* lpszNextToken = NULL;
+	LPWSTR lpszToken = NULL;
+	int iPos = 0;
+	errno_t errCopy = 0;
+
+	WCHAR szKeyStatDescriptor[KEYSTAT_LENGTH + 1] = { 0 };
+	BOOL  isStatusOn = FALSE;
+
+	lpszToken = wcstok_s(lpszParseLine, L".=\n", &lpszNextToken);
+	while (lpszToken != NULL && errCopy == 0) {
+		if (iPos == 1) {
+			// key descriptor line caps,num,scroll
+			removeSpaces(lpszToken);
+			errCopy = wcscpy_s(szKeyStatDescriptor, KEYSTAT_LENGTH+1, lpszToken);
+		}
+		else if (iPos == 2) {
+			// lang msg id
+			removeSpaces(lpszToken);
+
+			isStatusOn = FALSE;
+			if (wcscmp(lpszToken, L"1") == 0) {
+				isStatusOn = TRUE;
+			}
+		} 
+		
+		if (!errCopy) {
+			if (iPos == 2 && wcslen(szKeyStatDescriptor) != 0 &&
+				(lstrcmp(szKeyStatDescriptor, L"caps") == 0 ||
+					lstrcmp(szKeyStatDescriptor, L"num") == 0 ||
+					lstrcmp(szKeyStatDescriptor, L"scroll") == 0))
+			{
+				if (!setKeyStatus(szKeyStatDescriptor, isStatusOn)) {
+					return FALSE;
+				}
+
+			}
+			else {
+				// parse error
+			}
+		}
+		else {
+			// invalid position 
+			return FALSE;
+		}
+
+		iPos++;
+		lpszToken = wcstok_s(NULL, L".=\n", &lpszNextToken);
+	}
+	return TRUE;
+}
+
+
+
+INT SaveConfig(LPWSTR lpszPath) {
+	BOOL bWriteError = FALSE;
+	DWORD dwBytesWritten;
+	WCHAR szWorkBuffer[1024] = L"\0";
+
+	// If its null , use the default config file
+	if (lpszPath == NULL) {
+		lpszPath = GetDefaultConfigPath();
+	}
+
+	if (lpszPath == NULL) {
+		return CFGERROR_NOTDEFAULTCONFIG;
+	}
+
+	// Open the existing file
+	HANDLE hFile = CreateFile(
+		lpszPath,                   // File name
+		GENERIC_WRITE,               // Access mode (write-only)
+		0,							 // Not shared
+		NULL,                       // Security attributes
+		OPEN_EXISTING,              // Open only if exists
+		FILE_ATTRIBUTE_NORMAL,      // File attributes
+		NULL
+	);
+
+	// freee memory
+	free(lpszPath);
+	lpszPath = NULL;
+
+	if (hFile == INVALID_HANDLE_VALUE) {
+		return CFGERROR_FILEOPENERROR;
+	}
+
+	// 0) Write BOM chars
+	// 
+	BYTE utf8BOM[] = { 0xEF, 0xBB, 0xBF };
+	bWriteError = WriteFile(hFile, utf8BOM, sizeof(utf8BOM), &dwBytesWritten, NULL);
+
+	// 1) Write defaults
+	// 
+
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"--var definitions\n");
+
+	wsprintf(szWorkBuffer, L"keystat.caps = %d\n", g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn);
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+
+	wsprintf(szWorkBuffer, L"keystat.num = %d\n", g_keyStatusConfig[KEYSTAT_NUM].isKeyStatOn);
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+
+	wsprintf(szWorkBuffer, L"keystat.scroll = %d\n", g_keyStatusConfig[KEYSTAT_SCROLL].isKeyStatOn);
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+
+
+	// Close the file handle
+	if (hFile) {
+		CloseHandle(hFile);
+	}
+
+	if (!bWriteError) {
+		return CFGERROR_WRITEERROR;
+	}
+
+	return 0;
+}
+
+static BOOL _WriteFileAsUtf8(HANDLE hFile, LPCWSTR lpszToWrite) {
+	DWORD dwBytesWritten = 0;
+	BOOL bOk = TRUE;
+
+	// Convert wide char string to UTF-8
+	int utf8Size = WideCharToMultiByte(
+		CP_UTF8,               // Code page (UTF-8)
+		0,                     // Flags (0 for default behavior)
+		lpszToWrite,            // Input wide char string
+		-1,                    // Input string length (-1 for null-terminated)
+		NULL,                  // Output buffer (get required size)
+		0,                     // Output buffer size
+		NULL, NULL             // Default replacement character, used when a character cannot be represented in the target character set.
+	);
+
+	if (utf8Size == 0) {
+		return FALSE;
+	}
+
+	// Get the result buffer to be written
+	char* utf8Buffer = (char *)calloc(1, utf8Size);
+
+	if (WideCharToMultiByte(
+		CP_UTF8,               // Code page (UTF-8)
+		0,                     // Flags (0 for default behavior)
+		lpszToWrite,            // Input wide char string
+		-1,                    // Input string length (-1 for null-terminated)
+		utf8Buffer,            // Output buffer
+		utf8Size,              // Output buffer size
+		NULL, NULL             // Default replacement character
+	) == 0) {
+		bOk = FALSE;
+	}
+
+	if (bOk) {
+		WriteFile(hFile, utf8Buffer, utf8Size - 1, &dwBytesWritten, NULL);
+	}
+
+	if (utf8Buffer) {
+		free(utf8Buffer);
+		utf8Buffer = NULL;
+	}
+
+	return bOk;
+}
+
+
+LPWSTR GetDefaultConfigPath() {
+	LPWSTR lpszPath = (LPWSTR)calloc(1, MAX_PATH * sizeof(WCHAR));
+
+	if (lpszPath != NULL) {
+		DWORD length = GetModuleFileName(NULL, lpszPath, MAX_PATH);
+
+		if (length == 0) {
+			return NULL;
+		}
+
+		// Remove the executable name to get the directory
+		LPWSTR lpszLastBackslash = wcsrchr(lpszPath, L'\\');
+		if (lpszLastBackslash != NULL) {
+			*lpszLastBackslash = L'\0';
+		}
+
+		// Now add the config file part
+		LPCWSTR lpszConfigFilePart = L"\\config.cfg";
+
+		if (wcscat_s(lpszPath, MAX_PATH, lpszConfigFilePart) != 0) {
+			return NULL;
+		}
+
+
+	}
+	// Free memory outside is not null!!!!!!!!
+	return lpszPath;
+}
+
+
+BOOL setKeyStatus(LPCWSTR lpszKeyStatDescriptor, BOOL isStatusOn) {
+	BOOL bRet = TRUE;
+
+	if (lstrcmp(lpszKeyStatDescriptor,L"caps")  == 0){
+		g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn = isStatusOn;
+	} else 	if (lstrcmp(lpszKeyStatDescriptor, L"num") == 0) {
+		g_keyStatusConfig[KEYSTAT_NUM].isKeyStatOn = isStatusOn;
+	} else 	if (lstrcmp(lpszKeyStatDescriptor, L"scroll") == 0) {
+		g_keyStatusConfig[KEYSTAT_SCROLL].isKeyStatOn = isStatusOn;
+	} else {
+		bRet = FALSE;
+	}
+
+	return bRet;
+}
+
+BOOL getKeyStatus(LPCWSTR lpszKeyStatDescriptor) {
+	if (lstrcmp(lpszKeyStatDescriptor, L"caps") == 0) {
+		return g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn;
+	}
+	else 	if (lstrcmp(lpszKeyStatDescriptor, L"num") == 0) {
+		return g_keyStatusConfig[KEYSTAT_NUM].isKeyStatOn;
+	}
+	else 	if (lstrcmp(lpszKeyStatDescriptor, L"scroll") == 0) {
+		return g_keyStatusConfig[KEYSTAT_SCROLL].isKeyStatOn;
+	}
+	return -1;
+}
