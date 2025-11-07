@@ -7,7 +7,6 @@
 #define IDS_APP_TITLE                   103
 #define IDD_ABOUTBOX                    103
 #define IDM_ABOUT                       104
-#define IDM_EXIT                        105
 #define IDI_CNSKEYS                     107
 #define IDI_SMALL                       108
 #define IDC_CNSKEYS                     109
@@ -22,11 +21,15 @@
 #define IDI_NNLICON                     136
 #define IDI_NSLICON                     137
 #define IDD_CONFIG_DIALOG               138
-#define IDC_SHOW_CAPS					139	
-#define IDC_SHOW_NUM					140
-#define IDC_SHOW_SCROLL					141
-#define IDR_KEYON						142
-#define IDR_KEYOFF						143
+#define IDC_SHOW_CAPS                   139
+#define IDC_SHOW_NUM                    140
+#define IDC_SHOW_SCROLL                 141
+#define IDR_KEYON                       142
+#define IDR_KEYOFF                      143
+#define IDC_STRVERSION                  1000
+#define IDC_STRAUTOR                    1001
+#define IDC_STRCOPYRIGHT                1002
+#define ID_ACCELERATOR32771             32771
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -35,8 +38,8 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        144
-#define _APS_NEXT_COMMAND_VALUE         32771
-#define _APS_NEXT_CONTROL_VALUE         1000
+#define _APS_NEXT_COMMAND_VALUE         32773
+#define _APS_NEXT_CONTROL_VALUE         1003
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
 #endif

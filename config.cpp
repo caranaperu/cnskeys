@@ -26,6 +26,7 @@
 #include <stdint.h>
 
 #include "config.h"
+#include "lang.h"
 #include "stringutils.h"
 
 #define CFGERROR_FILEOPENERROR      1
@@ -41,6 +42,8 @@
 
 static BOOL ProcessConfigLine(LPWSTR lpszParseLine);
 static BOOL ParseKeyStatus(LPWSTR lpszParseLine);
+static BOOL ParseVariableConfigLine(LPWSTR lpszParseLine);
+static BOOL ParseLanguageConfigLine(LPWSTR lpszParseLine);
 static BOOL _WriteFileAsUtf8(HANDLE hFile, LPCWSTR lpszToWrite);
 
 /* Definición única de la variable global */
@@ -185,6 +188,15 @@ static BOOL ProcessConfigLine(LPWSTR lpszParseLine) {
 		if (!ParseKeyStatus(lpszParseLine)) {
 			return FALSE;
 		}
+	} else 	if (startsWith(lpszParseLine, VAR_PREFIX)) {
+		if (!ParseVariableConfigLine(lpszParseLine)) {
+			return FALSE;
+		}
+	}
+	else 	if (startsWith(lpszParseLine, LANG_PREFIX)) {
+		if (!ParseLanguageConfigLine(lpszParseLine)) {
+			return FALSE;
+		}
 	}
 
 	return TRUE;
@@ -207,7 +219,7 @@ static BOOL ParseKeyStatus(LPWSTR lpszParseLine) {
 			errCopy = wcscpy_s(szKeyStatDescriptor, KEYSTAT_LENGTH+1, lpszToken);
 		}
 		else if (iPos == 2) {
-			// lang msg id
+			// staus 1 on , 0 off
 			removeSpaces(lpszToken);
 
 			isStatusOn = FALSE;
@@ -239,6 +251,116 @@ static BOOL ParseKeyStatus(LPWSTR lpszParseLine) {
 		iPos++;
 		lpszToken = wcstok_s(NULL, L".=\n", &lpszNextToken);
 	}
+	return TRUE;
+}
+
+static BOOL ParseVariableConfigLine(LPWSTR lpszParseLine) {
+	WCHAR* lpszNextToken = NULL;
+	LPWSTR lpszToken = NULL;
+	int iPos = 0;
+	errno_t errCopy = 0;
+	INT iEntryType = -1;
+
+	lpszToken = wcstok_s(lpszParseLine, L".=\n", &lpszNextToken);
+	while (lpszToken != NULL && errCopy == 0) {
+		removeSpaces(lpszToken);
+
+
+		if (iPos == 1) {
+			if (!lstrcmp(lpszToken, L"lang_default")) {
+				iEntryType = 1;
+			}
+			else {
+				errCopy = 1; // err detected
+			}
+		}
+		else if (iPos == 2) {
+			if (iEntryType == 1) {
+				setDefaultLanguage(lpszToken);
+			}
+			else {
+				errCopy = 1; // err detected
+			}
+
+		}
+		iPos++;
+
+		lpszToken = wcstok_s(NULL, L".=\n", &lpszNextToken);
+	}
+
+	if (errCopy == 0) {
+		return TRUE;
+	}
+	else {
+		return FALSE;
+	}
+}
+
+
+static BOOL ParseLanguageConfigLine(LPWSTR lpszParseLine) {
+	WCHAR* lpszNextToken = NULL;
+	LPWSTR lpszToken = NULL;
+	int iPos = 0;
+	errno_t errCopy = 0;
+
+	WCHAR szLangDescriptor[LANG_MAXDESC_LENGTH + 1] = { 0 };
+	WCHAR szLangName[LANG_MAXNAME_LENGTH + 1] = { 0 };
+	WCHAR szLangMessageId[LANG_MAXID_LENGTH + 1] = { 0 };
+	WCHAR szLangMessage[LANG_MAXMSG_LENGTH + 1] = { 0 };
+
+	BOOL isNextLangName = FALSE;
+
+	lpszToken = wcstok_s(lpszParseLine, L".=\n", &lpszNextToken);
+	while (lpszToken != NULL && errCopy == 0) {
+
+
+		if (iPos == 1) {
+			// lang descriptor, line es,en
+			removeSpaces(lpszToken);
+			errCopy = wcscpy_s(szLangDescriptor, LANG_MAXDESC_LENGTH, lpszToken);
+		}
+		else if (iPos == 2) {
+			// lang msg id
+			removeSpaces(lpszToken);
+			if (wcscmp(lpszToken, L"langname") == 0) {
+				isNextLangName = TRUE;
+			}
+			else {
+
+				errCopy = wcscpy_s(szLangMessageId, LANG_MAXID_LENGTH, lpszToken);
+			}
+
+		}
+		else if (iPos == 3) {
+			rtrim(ltrim(lpszToken));
+
+			if (isNextLangName) {
+				errCopy = wcscpy_s(szLangName, LANG_MAXNAME_LENGTH, lpszToken);
+			}
+			else {
+				// lang msg text
+				errCopy = wcscpy_s(szLangMessage, LANG_MAXMSG_LENGTH, lpszToken);
+
+			}
+		}
+		iPos++;
+
+		lpszToken = wcstok_s(NULL, L".=\n", &lpszNextToken);
+	}
+
+	// Check error , if error return 
+	if (errCopy != 0 && (wcslen(szLangDescriptor) == 0 || wcslen(szLangMessageId) == 0 ||
+		wcslen(szLangMessage) == 0 || (isNextLangName && wcslen(szLangName) == 0))) {
+		return FALSE;
+	}
+
+	if (addLanguage(szLangDescriptor, szLangName) == TRUE) {
+		if (!isNextLangName) {
+			addLanguageMessage(szLangDescriptor, szLangMessageId, szLangMessage);
+		}
+	}
+
+	// Add the line elements to the language data
 	return TRUE;
 }
 
@@ -285,7 +407,7 @@ INT SaveConfig(LPWSTR lpszPath) {
 	// 1) Write defaults
 	// 
 
-	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"--var definitions\n");
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"-- key stats definitions\n");
 
 	wsprintf(szWorkBuffer, L"keystat.caps = %d\n", g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn);
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
@@ -296,6 +418,34 @@ INT SaveConfig(LPWSTR lpszPath) {
 	wsprintf(szWorkBuffer, L"keystat.scroll = %d\n", g_keyStatusConfig[KEYSTAT_SCROLL].isKeyStatOn);
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
 
+
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"--var definitions\n");
+
+	// 2) Variables
+	// var.lang_default = xx
+	CONFIG_LANGDESC* pLangDesc = getDefaultLanguage();
+	wsprintf(szWorkBuffer, L"var.lang_default = %s\n\n", pLangDesc->szLangDescriptor);
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+
+	// 3) Write Language stuff
+	// 
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"---- Language definiton\n");
+
+	CONFIG_LANGS* pLangs = getLanguages();
+
+	for (int i = 0; i < pLangs->iNumElems && bWriteError; i++) {
+		if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"--\n");
+
+		wsprintf(szWorkBuffer, L"lang.%s.langname = %s\n", pLangs->pLangDescriptors[i]->szLangDescriptor, pLangs->pLangDescriptors[i]->szLangName);
+		if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+
+		for (int j = 0; j < pLangs->pLangDescriptors[i]->iNumEntries && bWriteError; j++) {
+			wsprintf(szWorkBuffer, L"lang.%s.%s = %s\n", pLangs->pLangDescriptors[i]->szLangDescriptor, pLangs->pLangDescriptors[i]->pLangEntries[j]->szID, pLangs->pLangDescriptors[i]->pLangEntries[j]->szMsg);
+			if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+		}
+		if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"\n");
+
+	}
 
 	// Close the file handle
 	if (hFile) {

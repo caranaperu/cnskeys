@@ -3,6 +3,8 @@
 
 #define KEYSTAT_PREFIX L"keystat."
 #define KEYSTAT_LENGTH 6
+#define LANG_PREFIX L"lang."
+#define VAR_PREFIX L"var."
 
 typedef struct {
 	WCHAR szID[KEYSTAT_LENGTH + 1];

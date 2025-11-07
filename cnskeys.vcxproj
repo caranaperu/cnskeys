@@ -138,6 +138,7 @@
     <ClInclude Include="cnskeys.h" />
     <ClInclude Include="config.h" />
     <ClInclude Include="framework.h" />
+    <ClInclude Include="lang.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="stringutils.h" />
     <ClInclude Include="targetver.h" />
@@ -145,6 +146,7 @@
   <ItemGroup>
     <ClCompile Include="cnskeys.cpp" />
     <ClCompile Include="config.cpp" />
+    <ClCompile Include="lang.cpp" />
     <ClCompile Include="stringutils.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -159,9 +161,19 @@
     <Image Include="C:\Users\arana\Downloads\numon.ico" />
     <Image Include="C:\Users\arana\Downloads\scrolloff.ico" />
     <Image Include="C:\Users\arana\Downloads\scrollon.ico" />
+    <Image Include="capsoff.ico" />
+    <Image Include="capson.ico" />
     <Image Include="cnskeys.ico" />
     <Image Include="icon1.ico" />
+    <Image Include="numoff.ico" />
+    <Image Include="numon.ico" />
+    <Image Include="scrolloff.ico" />
+    <Image Include="scrollon.ico" />
     <Image Include="small.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <Media Include="keyoff.wav" />
+    <Media Include="keyon.wav" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
