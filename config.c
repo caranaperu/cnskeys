@@ -552,7 +552,7 @@ BOOL setKeyStatus(LPCWSTR lpszKeyStatDescriptor, BOOL isStatusOn) {
 	return bRet;
 }
 
-BOOL getKeyStatus(LPCWSTR lpszKeyStatDescriptor) {
+BOOL getKeyStatusConfig(LPCWSTR lpszKeyStatDescriptor) {
 	if (lstrcmp(lpszKeyStatDescriptor, L"caps") == 0) {
 		return g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn;
 	}

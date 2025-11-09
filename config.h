@@ -21,7 +21,7 @@ enum keyStatusEnum {
 	KEYSTAT_SCROLL = 2
 };
 
-BOOL getKeyStatus(LPCWSTR lpszKeyStatDescriptor);
+BOOL getKeyStatusConfig(LPCWSTR lpszKeyStatDescriptor);
 BOOL setKeyStatus(LPCWSTR lpszKeyStatDescriptor, BOOL isStatusOn);
 
 extern CONFIG_KEYSTAT g_keyStatusConfig[3];

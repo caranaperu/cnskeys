@@ -30,21 +30,24 @@ NOTIFYICONDATAW nidCaps;
 NOTIFYICONDATAW nidNum;
 NOTIFYICONDATAW nidScroll;
 
-static VOID invalidConfigMessageBox();
-static void DestroyApp();
-INT_PTR CALLBACK ConfigDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
-static void loadIcons();
-static void unloadIcons();
-static void UpdateTrayIcons();
-static void ShowTrayMenu(HWND hwnd, int trayId);
-LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
-
 HICON hIconCapsOn;
 HICON hIconCapsOff;
 HICON hIconNumOn;
 HICON hIconNumOff;
 HICON hIconScrollOn;
 HICON hIconScrollOff;
+
+static VOID invalidConfigMessageBox();
+static void DestroyApp();
+INT_PTR CALLBACK ConfigDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
+static void loadIcons();
+static void unloadIcons();
+static void ShowTrayIcons();
+static void UpdateTrayIcons();
+static void ShowTrayMenu(HWND hwnd, int trayId);
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam);
+
+
 
 enum {
 	TRAY_ID_CAPS = 1,
@@ -53,7 +56,9 @@ enum {
 };
 
 bool capsLock = false, numLock = false, scrollLock = false;
+bool capsLockPrev = false, numLockPrev = false, scrollLockPrev = false;
 
+static BOOL g_configDialogOpen = FALSE;
 
 // Declaraciones de funciones adelantadas incluidas en este módulo de código:
 BOOL                InitInstance(HINSTANCE, int);
@@ -95,7 +100,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	wcex.cbWndExtra = 0;
 	wcex.hInstance = hInstance;
 	wcex.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_CNSKEYS));
-	wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+	wcex.hCursor = LoadCursor(NULL, IDC_ARROW);
 	wcex.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	wcex.lpszMenuName = MAKEINTRESOURCEW(IDC_CNSKEYS);
 	wcex.lpszClassName = szWindowClass;
@@ -116,7 +121,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	MSG msg;
 
 	// Bucle principal de mensajes:
-	while (GetMessage(&msg, nullptr, 0, 0))
+	while (GetMessage(&msg, NULL, 0, 0))
 	{
 		if (!TranslateAccelerator(msg.hwnd, hAccelTable, &msg))
 		{
@@ -145,8 +150,9 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 	hInst = hInstance; // Almacenar identificador de instancia en una variable global
 
-	HWND hWnd = CreateWindowW(szWindowClass, szTitle, WS_OVERLAPPEDWINDOW,
-		0, 0, 0, 0, nullptr, nullptr, hInstance, nullptr);
+	HWND hWnd = CreateWindowEx( WS_EX_TOOLWINDOW, szWindowClass, szTitle,
+		WS_POPUP,
+		-100, -100, 1, 1, NULL, NULL, hInstance, NULL);
 
 	if (!hWnd)
 	{
@@ -175,14 +181,11 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
 	loadIcons();
 
-	capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
-	numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
-	scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
-
+	ShowTrayIcons(TRUE);
 	UpdateTrayIcons();
 
-	//ShowWindow(hWnd, nCmdShow);
-	//UpdateWindow(hWnd);
+	ShowWindow(hWnd, SW_SHOWNOACTIVATE);
+	UpdateWindow(hWnd);
 
 	return TRUE;
 }
@@ -218,26 +221,40 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		// Analizar las selecciones de menú
 
 		if (wmId == WM_MENUCONFIGUREKEYS) {
-			POINT pt;
-			RECT rc;
+			if (!g_configDialogOpen) {
 
-			// Crear identificador para el icono de la bandeja
-			NOTIFYICONIDENTIFIER nii = { 0 };
-			nii.cbSize = sizeof(NOTIFYICONIDENTIFIER);
-			nii.hWnd = nidCaps.hWnd;
-			nii.uID = nidCaps.uID;
+				POINT pt;
+				RECT rc;
 
-			Shell_NotifyIconGetRect(&nii, &rc);
-			pt.x = rc.left;
-			pt.y = rc.top;
+				// Crear identificador para el icono de la bandeja
+				NOTIFYICONIDENTIFIER nii = { 0 };
+				nii.cbSize = sizeof(NOTIFYICONIDENTIFIER);
+				// Tomo el dato x,y del primer visible
+				if (getKeyStatusConfig(L"caps")) {
+					nii.hWnd = nidCaps.hWnd;
+					nii.uID = nidCaps.uID;
+				}
+				else if (getKeyStatusConfig(L"num")) {
+					nii.hWnd = nidNum.hWnd;
+					nii.uID = nidNum.uID;
+				}
+				else {
+					nii.hWnd = nidScroll.hWnd;
+					nii.uID = nidScroll.uID;
+				}
 
-			// Pasamos la dirección de dlgPos en lParam; es válido porque DialogBoxParam es modal
-			DialogBoxParam(hInst, MAKEINTRESOURCE(IDD_CONFIG_DIALOG), hWnd, ConfigDialogProc, (LPARAM)&pt);
+				Shell_NotifyIconGetRect(&nii, &rc);
+				pt.x = rc.left;
+				pt.y = rc.top;
 
+				// Pasamos la dirección de dlgPos en lParam; es válido porque DialogBoxParam es modal
+				// no permitimos abrir más de uno a la vez
+				g_configDialogOpen = TRUE;
+				DialogBoxParam(hInst, MAKEINTRESOURCE(IDD_CONFIG_DIALOG), hWnd, ConfigDialogProc, (LPARAM)&pt);
+				g_configDialogOpen = FALSE;
 
-			//                DialogBox(hInst, MAKEINTRESOURCE(IDD_CONFIG_DIALOG), hWnd, ConfigDialogProc);
-			UpdateTrayIcons(); // función que agrega/elimina íconos según showCaps/showNum/showScroll
-
+				ShowTrayIcons(FALSE); // función que agrega/elimina íconos según showCaps/showNum/showScroll
+			}
 		}
 		else if (wmId == WM_MENUEXIT) {
 			DestroyApp();
@@ -293,9 +310,9 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 		KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
 		if (wParam == WM_KEYDOWN || wParam == WM_KEYUP) {
 			if (p->vkCode == VK_CAPITAL || p->vkCode == VK_NUMLOCK || p->vkCode == VK_SCROLL) {
-				capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
-				numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
-				scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
+				//capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
+				//numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
+				//scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
 				UpdateTrayIcons();
 			}
 		}
@@ -372,27 +389,55 @@ static void unloadIcons() {
 	if (hIconScrollOff)  DestroyIcon(hIconScrollOff);
 }
 
-static void updateIcon(NOTIFYICONDATAW* nid, LPCWSTR szKeyDescriptor, BOOL bCurrentStatus, HICON hIconKeyOn, HICON hIconKeyOff) {
-	BOOL isAdd = FALSE;
-
-	if (!getKeyStatus(szKeyDescriptor)) {
+static void ShowIconStatus(NOTIFYICONDATAW* nid, BOOL bShow, HICON hIcon) {
+	if (bShow) {
+		nid->hIcon = hIcon;
+		Shell_NotifyIcon(NIM_ADD, nid);
+	}
+	else {
 		Shell_NotifyIcon(NIM_DELETE, nid);
 		nid->hIcon = NULL;
 	}
-	else {
-		if (nid->hIcon == NULL) isAdd = TRUE;
-
-		nid->hIcon = (bCurrentStatus ? hIconKeyOn : hIconKeyOff);
-		Shell_NotifyIcon(isAdd ? NIM_ADD : NIM_MODIFY, nid);
-		PlaySound(capsLock ? MAKEINTRESOURCE(IDR_KEYON) : MAKEINTRESOURCE(IDR_KEYOFF), hInst, SND_ASYNC | SND_RESOURCE);
-	}
 }
 
-static void UpdateTrayIcons() {
-	updateIcon(&nidCaps, L"caps", capsLock, hIconCapsOn, hIconCapsOff);
-	updateIcon(&nidNum, L"num", numLock, hIconNumOn, hIconNumOff);
-	updateIcon(&nidScroll, L"scroll", scrollLock, hIconScrollOn, hIconScrollOff);
+static void ShowTrayIcons(BOOL isInit) {
+	capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
+	numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
+	scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
 
+	ShowIconStatus(&nidCaps, getKeyStatusConfig(L"caps"), capsLock ? hIconCapsOn : hIconCapsOff);
+	ShowIconStatus(&nidNum, getKeyStatusConfig(L"num"), numLock ? hIconNumOn : hIconNumOff);
+	ShowIconStatus(&nidScroll, getKeyStatusConfig(L"scroll"), scrollLock ? hIconScrollOn : hIconScrollOff);
+}
+
+
+static void updateIcon(NOTIFYICONDATAW* nid, LPCWSTR szKeyDescriptor, BOOL bCurrentStatus, HICON hIconKeyOn, HICON hIconKeyOff) {
+	nid->hIcon = (bCurrentStatus ? hIconKeyOn : hIconKeyOff);
+	Shell_NotifyIcon(NIM_MODIFY, nid);
+	PlaySound(bCurrentStatus ? MAKEINTRESOURCE(IDR_KEYON) : MAKEINTRESOURCE(IDR_KEYOFF), hInst, SND_ASYNC | SND_RESOURCE);
+}
+
+
+static void UpdateTrayIcons() {
+	capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
+	numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
+	scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
+
+	if (capsLock != capsLockPrev) {
+		if(getKeyStatusConfig(L"caps"))
+			updateIcon(&nidCaps, L"caps", capsLock, hIconCapsOn, hIconCapsOff);
+		capsLockPrev = capsLock;
+	}
+	if (numLock != numLockPrev) {
+		if(getKeyStatusConfig(L"num"))
+			updateIcon(&nidNum, L"num", numLock, hIconNumOn, hIconNumOff);
+		numLockPrev = numLock;
+	}
+	if (scrollLock != scrollLockPrev) {
+		if (getKeyStatusConfig(L"scroll"))
+			updateIcon(&nidScroll, L"scroll", scrollLock, hIconScrollOn, hIconScrollOff);
+		scrollLockPrev = scrollLock;
+	}
 }
 
 /*
@@ -507,9 +552,9 @@ INT_PTR CALLBACK ConfigDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
 		}
 
 
-		CheckDlgButton(hDlg, IDC_SHOW_CAPS, getKeyStatus(L"caps") ? BST_CHECKED : BST_UNCHECKED);
-		CheckDlgButton(hDlg, IDC_SHOW_NUM, getKeyStatus(L"num") ? BST_CHECKED : BST_UNCHECKED);
-		CheckDlgButton(hDlg, IDC_SHOW_SCROLL, getKeyStatus(L"scroll") ? BST_CHECKED : BST_UNCHECKED);
+		CheckDlgButton(hDlg, IDC_SHOW_CAPS, getKeyStatusConfig(L"caps") ? BST_CHECKED : BST_UNCHECKED);
+		CheckDlgButton(hDlg, IDC_SHOW_NUM, getKeyStatusConfig(L"num") ? BST_CHECKED : BST_UNCHECKED);
+		CheckDlgButton(hDlg, IDC_SHOW_SCROLL, getKeyStatusConfig(L"scroll") ? BST_CHECKED : BST_UNCHECKED);
 		return TRUE;
 
 	case WM_COMMAND:

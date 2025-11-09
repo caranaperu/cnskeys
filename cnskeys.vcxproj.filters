@@ -38,16 +38,16 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="cnskeys.cpp">
+    <ClCompile Include="cnskeys.c">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
-    <ClCompile Include="config.cpp">
+    <ClCompile Include="config.c">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
-    <ClCompile Include="stringutils.cpp">
+    <ClCompile Include="stringutils.c">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
-    <ClCompile Include="lang.cpp">
+    <ClCompile Include="lang.c">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
   </ItemGroup>
