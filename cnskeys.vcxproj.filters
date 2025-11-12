@@ -57,19 +57,7 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="small.ico">
-      <Filter>Archivos de recursos</Filter>
-    </Image>
-    <Image Include="C:\Users\arana\Downloads\cl.ico">
-      <Filter>Archivos de recursos</Filter>
-    </Image>
-    <Image Include="C:\Users\arana\Downloads\ns.ico">
-      <Filter>Archivos de recursos</Filter>
-    </Image>
     <Image Include="cnskeys.ico">
-      <Filter>Archivos de recursos</Filter>
-    </Image>
-    <Image Include="icon1.ico">
       <Filter>Archivos de recursos</Filter>
     </Image>
     <Image Include="C:\Users\arana\Downloads\capson.ico">
@@ -106,6 +94,27 @@
       <Filter>Archivos de recursos</Filter>
     </Image>
     <Image Include="scrolloff.ico">
+      <Filter>Archivos de recursos</Filter>
+    </Image>
+    <Image Include="app.ico">
+      <Filter>Archivos de recursos</Filter>
+    </Image>
+    <Image Include="letra_c.ico">
+      <Filter>Archivos de recursos</Filter>
+    </Image>
+    <Image Include="letra_c_off.ico">
+      <Filter>Archivos de recursos</Filter>
+    </Image>
+    <Image Include="letra_n.ico">
+      <Filter>Archivos de recursos</Filter>
+    </Image>
+    <Image Include="letra_n_off.ico">
+      <Filter>Archivos de recursos</Filter>
+    </Image>
+    <Image Include="letra_s.ico">
+      <Filter>Archivos de recursos</Filter>
+    </Image>
+    <Image Include="letra_s_off.ico">
       <Filter>Archivos de recursos</Filter>
     </Image>
   </ItemGroup>

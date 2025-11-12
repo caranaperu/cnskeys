@@ -26,7 +26,6 @@
 #include <stdint.h>
 
 #include "config.h"
-#include "lang.h"
 #include "stringutils.h"
 
 #define CFGERROR_FILEOPENERROR      1
@@ -45,15 +44,22 @@ static BOOL ParseKeyStatus(LPWSTR lpszParseLine);
 static BOOL ParseVariableConfigLine(LPWSTR lpszParseLine);
 static BOOL ParseLanguageConfigLine(LPWSTR lpszParseLine);
 static BOOL _WriteFileAsUtf8(HANDLE hFile, LPCWSTR lpszToWrite);
+static BOOL CompareConfig(const CONFIG_STAT* newConfig, const CONFIG_STAT* oldConfig);
+
 
 /* Definición única de la variable global */
-CONFIG_KEYSTAT g_keyStatusConfig[3] = {
-	{ L"caps",   TRUE},
-	{ L"num",    TRUE},
-	{ L"scroll", TRUE}
+CONFIG_STAT g_configStat =
+{
+	{
+		{ L"caps",   TRUE},
+		{ L"num",    TRUE},
+		{ L"scroll", TRUE}
+	},
+	TRUE,
+	L"en"
 };
 
-
+CONFIG_STAT g_configStatLoaded = { 0 }; // To keep track of loaded config
 
 INT LoadConfig(LPWSTR lpszPath) {
 	int iErrno = 0;
@@ -177,6 +183,8 @@ INT LoadConfig(LPWSTR lpszPath) {
 		CloseHandle(hFile);
 	}
 
+	g_configStatLoaded = g_configStat; // to preserve loaded values
+
 	return iErrno;
 }
 
@@ -188,7 +196,8 @@ static BOOL ProcessConfigLine(LPWSTR lpszParseLine) {
 		if (!ParseKeyStatus(lpszParseLine)) {
 			return FALSE;
 		}
-	} else 	if (startsWith(lpszParseLine, VAR_PREFIX)) {
+	}
+	else 	if (startsWith(lpszParseLine, VAR_PREFIX)) {
 		if (!ParseVariableConfigLine(lpszParseLine)) {
 			return FALSE;
 		}
@@ -216,7 +225,7 @@ static BOOL ParseKeyStatus(LPWSTR lpszParseLine) {
 		if (iPos == 1) {
 			// key descriptor line caps,num,scroll
 			removeSpaces(lpszToken);
-			errCopy = wcscpy_s(szKeyStatDescriptor, KEYSTAT_LENGTH+1, lpszToken);
+			errCopy = wcscpy_s(szKeyStatDescriptor, KEYSTAT_LENGTH + 1, lpszToken);
 		}
 		else if (iPos == 2) {
 			// staus 1 on , 0 off
@@ -226,15 +235,15 @@ static BOOL ParseKeyStatus(LPWSTR lpszParseLine) {
 			if (wcscmp(lpszToken, L"1") == 0) {
 				isStatusOn = TRUE;
 			}
-		} 
-		
+		}
+
 		if (!errCopy) {
 			if (iPos == 2 && wcslen(szKeyStatDescriptor) != 0 &&
 				(lstrcmp(szKeyStatDescriptor, L"caps") == 0 ||
 					lstrcmp(szKeyStatDescriptor, L"num") == 0 ||
 					lstrcmp(szKeyStatDescriptor, L"scroll") == 0))
 			{
-				if (!setKeyStatus(szKeyStatDescriptor, isStatusOn)) {
+				if (!SetKeyStatusConfig(szKeyStatDescriptor, isStatusOn)) {
 					return FALSE;
 				}
 
@@ -270,13 +279,20 @@ static BOOL ParseVariableConfigLine(LPWSTR lpszParseLine) {
 			if (!lstrcmp(lpszToken, L"lang_default")) {
 				iEntryType = 1;
 			}
+			else if (!lstrcmp(lpszToken, L"sound_on")) {
+				// future variable types
+				iEntryType = 2;
+			}
 			else {
 				errCopy = 1; // err detected
 			}
 		}
 		else if (iPos == 2) {
 			if (iEntryType == 1) {
-				setDefaultLanguage(lpszToken);
+				SetConfigLanguage(lpszToken);
+			}
+			else if (iEntryType == 2) {
+				SetSoundActiveConfig(!lstrcmp(lpszToken, L"1") ? TRUE : FALSE);
 			}
 			else {
 				errCopy = 1; // err detected
@@ -371,6 +387,11 @@ INT SaveConfig(LPWSTR lpszPath) {
 	DWORD dwBytesWritten;
 	WCHAR szWorkBuffer[1024] = L"\0";
 
+	if (CompareConfig(&g_configStat, &g_configStatLoaded)) {
+		// No changes , no need to save
+		return 0;
+	}
+
 	// If its null , use the default config file
 	if (lpszPath == NULL) {
 		lpszPath = GetDefaultConfigPath();
@@ -409,23 +430,28 @@ INT SaveConfig(LPWSTR lpszPath) {
 
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"-- key stats definitions\n");
 
-	wsprintf(szWorkBuffer, L"keystat.caps = %d\n", g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn);
+	wsprintf(szWorkBuffer, L"keystat.caps = %d\n", GetKeyStatusConfig(L"caps"));
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
 
-	wsprintf(szWorkBuffer, L"keystat.num = %d\n", g_keyStatusConfig[KEYSTAT_NUM].isKeyStatOn);
+	wsprintf(szWorkBuffer, L"keystat.num = %d\n", GetKeyStatusConfig(L"num"));
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
 
-	wsprintf(szWorkBuffer, L"keystat.scroll = %d\n", g_keyStatusConfig[KEYSTAT_SCROLL].isKeyStatOn);
+	wsprintf(szWorkBuffer, L"keystat.scroll = %d\n", GetKeyStatusConfig(L"scroll"));
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
 
 
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, L"--var definitions\n");
 
 	// 2) Variables
+	// var.sound_on = 1 o 0
+	wsprintf(szWorkBuffer, L"var.sound_on = %s\n\n", IsSoundActiveConfig() ? L"1" : L"0");
+	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+
 	// var.lang_default = xx
 	CONFIG_LANGDESC* pLangDesc = getDefaultLanguage();
 	wsprintf(szWorkBuffer, L"var.lang_default = %s\n\n", pLangDesc->szLangDescriptor);
 	if (bWriteError) bWriteError = _WriteFileAsUtf8(hFile, szWorkBuffer);
+
 
 	// 3) Write Language stuff
 	// 
@@ -479,7 +505,7 @@ static BOOL _WriteFileAsUtf8(HANDLE hFile, LPCWSTR lpszToWrite) {
 	}
 
 	// Get the result buffer to be written
-	char* utf8Buffer = (char *)calloc(1, utf8Size);
+	char* utf8Buffer = (char*)calloc(1, utf8Size);
 
 	if (WideCharToMultiByte(
 		CP_UTF8,               // Code page (UTF-8)
@@ -536,31 +562,61 @@ LPWSTR GetDefaultConfigPath() {
 }
 
 
-BOOL setKeyStatus(LPCWSTR lpszKeyStatDescriptor, BOOL isStatusOn) {
+BOOL SetKeyStatusConfig(LPCWSTR lpszKeyStatDescriptor, BOOL isStatusOn) {
 	BOOL bRet = TRUE;
 
-	if (lstrcmp(lpszKeyStatDescriptor,L"caps")  == 0){
-		g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn = isStatusOn;
-	} else 	if (lstrcmp(lpszKeyStatDescriptor, L"num") == 0) {
-		g_keyStatusConfig[KEYSTAT_NUM].isKeyStatOn = isStatusOn;
-	} else 	if (lstrcmp(lpszKeyStatDescriptor, L"scroll") == 0) {
-		g_keyStatusConfig[KEYSTAT_SCROLL].isKeyStatOn = isStatusOn;
-	} else {
+	if (lstrcmp(lpszKeyStatDescriptor, L"caps") == 0) {
+		g_configStat.keyStatus[KEYSTAT_CAPS].isKeyStatOn = isStatusOn;
+	}
+	else 	if (lstrcmp(lpszKeyStatDescriptor, L"num") == 0) {
+		g_configStat.keyStatus[KEYSTAT_NUM].isKeyStatOn = isStatusOn;
+	}
+	else 	if (lstrcmp(lpszKeyStatDescriptor, L"scroll") == 0) {
+		g_configStat.keyStatus[KEYSTAT_SCROLL].isKeyStatOn = isStatusOn;
+	}
+	else {
 		bRet = FALSE;
 	}
 
 	return bRet;
 }
 
-BOOL getKeyStatusConfig(LPCWSTR lpszKeyStatDescriptor) {
+BOOL GetKeyStatusConfig(LPCWSTR lpszKeyStatDescriptor) {
 	if (lstrcmp(lpszKeyStatDescriptor, L"caps") == 0) {
-		return g_keyStatusConfig[KEYSTAT_CAPS].isKeyStatOn;
+		return g_configStat.keyStatus[KEYSTAT_CAPS].isKeyStatOn;
 	}
 	else 	if (lstrcmp(lpszKeyStatDescriptor, L"num") == 0) {
-		return g_keyStatusConfig[KEYSTAT_NUM].isKeyStatOn;
+		return g_configStat.keyStatus[KEYSTAT_NUM].isKeyStatOn;
 	}
 	else 	if (lstrcmp(lpszKeyStatDescriptor, L"scroll") == 0) {
-		return g_keyStatusConfig[KEYSTAT_SCROLL].isKeyStatOn;
+		return g_configStat.keyStatus[KEYSTAT_SCROLL].isKeyStatOn;
 	}
 	return -1;
+}
+
+
+BOOL IsSoundActiveConfig() {
+	return g_configStat.soundOn;
+}
+
+VOID SetSoundActiveConfig(BOOL bSoundOn) {
+	g_configStat.soundOn = bSoundOn;
+}
+
+VOID SetConfigLanguage(LPWSTR lpszLangDescriptor) {
+	wcscpy_s(g_configStat.szDefaultLang, LANG_MAXDESC_LENGTH, lpszLangDescriptor);
+	setDefaultLanguage(lpszLangDescriptor);
+}
+
+BOOL CompareConfig(const CONFIG_STAT* newConfig, const CONFIG_STAT* oldConfig) {
+	if (newConfig->soundOn == oldConfig->soundOn &&
+		!lstrcmp(newConfig->szDefaultLang, oldConfig->szDefaultLang) &&
+			newConfig->keyStatus[KEYSTAT_CAPS].isKeyStatOn == oldConfig->keyStatus[KEYSTAT_CAPS].isKeyStatOn &&
+			newConfig->keyStatus[KEYSTAT_NUM].isKeyStatOn == oldConfig->keyStatus[KEYSTAT_NUM].isKeyStatOn &&
+			newConfig->keyStatus[KEYSTAT_SCROLL].isKeyStatOn == oldConfig->keyStatus[KEYSTAT_SCROLL].isKeyStatOn) {
+
+			// The same
+			return TRUE;
+	}
+	return FALSE;
 }

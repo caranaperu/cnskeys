@@ -1,4 +1,4 @@
-// cnskeys.cpp : Define el punto de entrada de la aplicación.
+// cnskeys.c punto de entrada y principal de la aplicacion
 //
 
 #include "framework.h"
@@ -20,28 +20,41 @@
 #define WM_MENUEXIT		        (WM_USER+3002)
 #define WM_MENULANGFIRST		(WM_USER+3003)
 #define WM_MENULANGLAST			(WM_USER+3250) // mas que suficiente
+#define WM_MENUSOUND 		    (WM_USER+3251)
+
+#define ISCAPSLOCKON  (GetKeyState(VK_CAPITAL) & 0x0001)
+#define ISNUMLOCKON   (GetKeyState(VK_NUMLOCK) & 0x0001)
+#define ISSCROLLLOCKON (GetKeyState(VK_SCROLL) & 0x0001)
 
 // Variables globales:
 HINSTANCE hInst;                                // instancia actual
 WCHAR szTitle[MAX_LOADSTRING];                  // Texto de la barra de título
 WCHAR szWindowClass[MAX_LOADSTRING];            // nombre de clase de la ventana principal
 HHOOK hHook;
-NOTIFYICONDATAW nidCaps;
-NOTIFYICONDATAW nidNum;
-NOTIFYICONDATAW nidScroll;
 
-HICON hIconCapsOn;
-HICON hIconCapsOff;
-HICON hIconNumOn;
-HICON hIconNumOff;
-HICON hIconScrollOn;
-HICON hIconScrollOff;
+typedef struct {
+	NOTIFYICONDATAW nid;
+	HICON hIconOn;
+	HICON hIconOff;
+	BOOL isVisible;
+	UINT keyId;
+	BOOL keyStatePrev;
+	BOOL added;
+} TRAYICON;
+
+static TRAYICON trayCaps, trayNum, trayScroll;
+
+
+// Declaraciones de funciones adelantadas incluidas en este módulo de código:
+LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
+INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
 static VOID invalidConfigMessageBox();
-static void DestroyApp();
+static void EndApp();
 INT_PTR CALLBACK ConfigDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM lParam);
-static void loadIcons();
-static void unloadIcons();
+static void loadTrayIcons();
+static void unloadTrayIcons();
+static void TrayIconInit(TRAYICON* t, HWND hWnd, UINT id, UINT keyId);
 static void ShowTrayIcons();
 static void UpdateTrayIcons();
 static void ShowTrayMenu(HWND hwnd, int trayId);
@@ -55,15 +68,8 @@ enum {
 	TRAY_ID_SCROLL = 3
 };
 
-bool capsLock = false, numLock = false, scrollLock = false;
-bool capsLockPrev = false, numLockPrev = false, scrollLockPrev = false;
-
 static BOOL g_configDialogOpen = FALSE;
 
-// Declaraciones de funciones adelantadas incluidas en este módulo de código:
-BOOL                InitInstance(HINSTANCE, int);
-LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
-INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	_In_opt_ HINSTANCE hPrevInstance,
@@ -90,9 +96,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	}
 
 
-	WNDCLASSEXW wcex;
+	WNDCLASSEXW wcex = { 0 };
 
-	wcex.cbSize = sizeof(WNDCLASSEX);
+	wcex.cbSize = sizeof(WNDCLASSEXW);
 
 	wcex.style = CS_HREDRAW | CS_VREDRAW;
 	wcex.lpfnWndProc = WndProc;
@@ -108,13 +114,40 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	RegisterClassExW(&wcex);
 
-	// Realizar la inicialización de la aplicación:
-	if (!InitInstance(hInstance, nCmdShow))
-	{
+
+	//  comprobar CreateWindowEx
+	HWND hWnd = CreateWindowEx(WS_EX_TOOLWINDOW, szWindowClass, szTitle,
+		WS_POPUP, -100, -100, 1, 1, NULL, NULL, hInstance, NULL);
+	if (!hWnd) {
+		DWORD err = GetLastError();
+		wchar_t buf[128];
+		swprintf_s(buf, _countof(buf), L"CreateWindowEx fallo: %u", err);
+		MessageBoxW(NULL, buf, L"Init error", MB_OK | MB_ICONERROR);
 		return FALSE;
 	}
 
+	// Inicializo variables
+	hInst = hInstance; // Almacenar identificador de instancia en una variable global
+	loadTrayIcons();
+
+	TrayIconInit(&trayCaps, hWnd, TRAY_ID_CAPS, VK_CAPITAL);
+	TrayIconInit(&trayNum, hWnd, TRAY_ID_NUM, VK_NUMLOCK);
+	TrayIconInit(&trayScroll, hWnd, TRAY_ID_SCROLL, VK_SCROLL);
+
+	ShowTrayIcons();
+	UpdateTrayIcons();
+
+	ShowWindow(hWnd, SW_SHOWNOACTIVATE);
+	UpdateWindow(hWnd);
+
+
+	// Comprobar SetWindowsHookEx
 	hHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, NULL, 0);
+	if (!hHook) {
+		DWORD err = GetLastError();
+		OutputDebugStringW(L"Warning: SetWindowsHookEx failed\n");
+		// No abortar: la app puede seguir funcionando sin hook; decide según tu política.
+	}
 
 	HACCEL hAccelTable = LoadAccelerators(hInstance, MAKEINTRESOURCE(IDC_CNSKEYS));
 
@@ -133,62 +166,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	return (int)msg.wParam;
 }
 
-
-//
-//   FUNCIÓN: InitInstance(HINSTANCE, int)
-//
-//   PROPÓSITO: Guarda el identificador de instancia y crea la ventana principal
-//
-//   COMENTARIOS:
-//
-//        En esta función, se guarda el identificador de instancia en una variable común y
-//        se crea y muestra la ventana principal del programa.
-//
-BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
-{
-
-
-	hInst = hInstance; // Almacenar identificador de instancia en una variable global
-
-	HWND hWnd = CreateWindowEx( WS_EX_TOOLWINDOW, szWindowClass, szTitle,
-		WS_POPUP,
-		-100, -100, 1, 1, NULL, NULL, hInstance, NULL);
-
-	if (!hWnd)
-	{
-		return FALSE;
-	}
-
-
-	nidCaps.cbSize = sizeof(NOTIFYICONDATA);
-	nidCaps.hWnd = hWnd;
-	nidCaps.uCallbackMessage = WM_TRAYICON;
-	nidCaps.uID = TRAY_ID_CAPS;
-	nidCaps.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-
-	nidNum.cbSize = sizeof(NOTIFYICONDATA);
-	nidNum.hWnd = hWnd;
-	nidNum.uCallbackMessage = WM_TRAYICON;
-	nidNum.uID = TRAY_ID_NUM;
-	nidNum.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-
-
-	nidScroll.cbSize = sizeof(NOTIFYICONDATA);
-	nidScroll.hWnd = hWnd;
-	nidScroll.uCallbackMessage = WM_TRAYICON;
-	nidScroll.uID = TRAY_ID_SCROLL;
-	nidScroll.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
-
-	loadIcons();
-
-	ShowTrayIcons(TRUE);
-	UpdateTrayIcons();
-
-	ShowWindow(hWnd, SW_SHOWNOACTIVATE);
-	UpdateWindow(hWnd);
-
-	return TRUE;
-}
 
 //
 //  FUNCIÓN: WndProc(HWND, UINT, WPARAM, LPARAM)
@@ -223,29 +200,34 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		if (wmId == WM_MENUCONFIGUREKEYS) {
 			if (!g_configDialogOpen) {
 
-				POINT pt;
+				POINT pt = { 0 };
 				RECT rc;
 
 				// Crear identificador para el icono de la bandeja
 				NOTIFYICONIDENTIFIER nii = { 0 };
 				nii.cbSize = sizeof(NOTIFYICONIDENTIFIER);
 				// Tomo el dato x,y del primer visible
-				if (getKeyStatusConfig(L"caps")) {
-					nii.hWnd = nidCaps.hWnd;
-					nii.uID = nidCaps.uID;
+				if (trayCaps.isVisible) {
+					nii.hWnd = trayCaps.nid.hWnd;
+					nii.uID = trayCaps.nid.uID;
 				}
-				else if (getKeyStatusConfig(L"num")) {
-					nii.hWnd = nidNum.hWnd;
-					nii.uID = nidNum.uID;
+				else if (trayNum.isVisible) {
+					nii.hWnd = trayNum.nid.hWnd;
+					nii.uID = trayNum.nid.uID;;
 				}
 				else {
-					nii.hWnd = nidScroll.hWnd;
-					nii.uID = nidScroll.uID;
+					nii.hWnd = trayScroll.nid.hWnd;
+					nii.uID = trayScroll.nid.uID;
 				}
 
-				Shell_NotifyIconGetRect(&nii, &rc);
-				pt.x = rc.left;
-				pt.y = rc.top;
+				if (SUCCEEDED(Shell_NotifyIconGetRect(&nii, &rc))) {
+					pt.x = rc.left;
+					pt.y = rc.top;
+				}
+				else {
+					// fallback si no disponible
+					GetCursorPos(&pt);
+				}
 
 				// Pasamos la dirección de dlgPos en lParam; es válido porque DialogBoxParam es modal
 				// no permitimos abrir más de uno a la vez
@@ -253,12 +235,16 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				DialogBoxParam(hInst, MAKEINTRESOURCE(IDD_CONFIG_DIALOG), hWnd, ConfigDialogProc, (LPARAM)&pt);
 				g_configDialogOpen = FALSE;
 
-				ShowTrayIcons(FALSE); // función que agrega/elimina íconos según showCaps/showNum/showScroll
+				ShowTrayIcons(); // función que agrega/elimina íconos según showCaps/showNum/showScroll
 			}
 		}
+		else if (wmId == WM_MENUSOUND) {
+			// toggle sonido
+			BOOL isSoundOn = IsSoundActiveConfig();
+			SetSoundActiveConfig(!isSoundOn);
+		}
 		else if (wmId == WM_MENUEXIT) {
-			DestroyApp();
-			PostQuitMessage(0);
+			EndApp();
 		}
 		else if (wmId == IDM_ABOUT) {
 			DialogBox(hInst, MAKEINTRESOURCE(IDD_ABOUTBOX), hWnd, About);
@@ -269,7 +255,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			CONFIG_LANGS* pLangs = getLanguages();
 			for (int i = 0; i < pLangs->iNumElems; i++) {
 				if (pLangs->pLangDescriptors[i]->iId == langId) {
-					setDefaultLanguage(pLangs->pLangDescriptors[i]->szLangDescriptor);
+					SetConfigLanguage(pLangs->pLangDescriptors[i]->szLangDescriptor);
 					break;
 				}
 			}
@@ -285,14 +271,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	{
 		PAINTSTRUCT ps;
 		HDC hdc = BeginPaint(hWnd, &ps);
-		// TODO: Agregar cualquier código de dibujo que use hDC aquí...
 		EndPaint(hWnd, &ps);
 	}
 	break;
 	case WM_DESTROY:
-		DestroyApp();
-		PostQuitMessage(0);
+		// salida al apagarse el equipo  , cerrar sesion, desde el adm de tareas,etc
+		EndApp();
 		break;
+
 	default:
 		return DefWindowProc(hWnd, message, wParam, lParam);
 	}
@@ -310,9 +296,6 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 		KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
 		if (wParam == WM_KEYDOWN || wParam == WM_KEYUP) {
 			if (p->vkCode == VK_CAPITAL || p->vkCode == VK_NUMLOCK || p->vkCode == VK_SCROLL) {
-				//capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
-				//numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
-				//scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
 				UpdateTrayIcons();
 			}
 		}
@@ -330,8 +313,37 @@ static VOID invalidConfigMessageBox() {
 }
 
 static void DestroyApp() {
-	unloadIcons();
+
+	// Eliminar íconos del area de notificación ANTES de destruir HICON
+	if (trayCaps.added) Shell_NotifyIconW(NIM_DELETE, &trayCaps.nid);
+	if (trayNum.added)  Shell_NotifyIconW(NIM_DELETE, &trayNum.nid);
+	if (trayScroll.added) Shell_NotifyIconW(NIM_DELETE, &trayScroll.nid);
+
+
+	unloadTrayIcons();
+
+	// Eliminar hook si existe
+	if (hHook) {
+		UnhookWindowsHookEx(hHook);
+		hHook = NULL;
+	}
+
 	freeLangsConfig();
+}
+
+static void EndApp() {
+	// actualizamos las globales del config previo a grabar
+	SetKeyStatusConfig(L"caps", trayCaps.isVisible);
+	SetKeyStatusConfig(L"num", trayNum.isVisible);
+	SetKeyStatusConfig(L"scroll", trayScroll.isVisible);
+
+	if (SaveConfig(NULL)) {
+		// Config failed , nada que hacer quedara como esta
+		OutputDebugStringW(L"Warning: SaveConfig failed\n");
+	}
+
+	DestroyApp();
+	PostQuitMessage(0);
 }
 
 /*
@@ -354,6 +366,17 @@ static void ShowTrayMenu(HWND hwnd, int trayId) {
 		AppendMenu(hSubMenuLanguage, MF_STRING, WM_MENULANGFIRST + (UINT_PTR)pLangs->pLangDescriptors[i]->iId, pLangs->pLangDescriptors[i]->szLangName);
 	}
 	AppendMenu(hMenu, MF_POPUP, (UINT_PTR)hSubMenuLanguage, getLanguageMessage(pLang->szLangDescriptor, L"traymenu_language"));
+	
+	// agregamos el toggle de sonidos
+	UINT soundFlags = MF_STRING;
+	if (IsSoundActiveConfig()) {
+		soundFlags |= MF_CHECKED;
+	}
+	else {
+		soundFlags |= MF_UNCHECKED;
+	}
+	AppendMenu(hMenu, soundFlags, WM_MENUSOUND,getLanguageMessage(pLang->szLangDescriptor, L"traymenu_sound"));
+
 	AppendMenu(hMenu, MF_SEPARATOR, 0, NULL);
 	AppendMenu(hMenu, MF_STRING, IDM_ABOUT, getLanguageMessage(pLang->szLangDescriptor, L"traymenu_about"));
 	AppendMenu(hMenu, MF_STRING, WM_MENUEXIT, getLanguageMessage(pLang->szLangDescriptor, L"traymenu_exit"));
@@ -370,73 +393,97 @@ static void ShowTrayMenu(HWND hwnd, int trayId) {
 * Icon managing
 *
 */
-static void loadIcons() {
-	hIconCapsOn = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_CLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-	hIconCapsOff = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NCLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-	hIconNumOn = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-	hIconNumOff = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NNLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-	hIconScrollOn = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_SLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
-	hIconScrollOff = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NSLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+static void loadTrayIcons() {
+	trayCaps.hIconOn= (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_CLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+	trayCaps.hIconOff = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NCLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+	trayNum.hIconOn = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+	trayNum.hIconOff = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NNLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+	trayScroll.hIconOn = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_SLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
+	trayScroll.hIconOff = (HICON)LoadImage(hInst, MAKEINTRESOURCE(IDI_NSLICON), IMAGE_ICON, 16, 16, LR_DEFAULTCOLOR);
 
 }
 
-static void unloadIcons() {
-	if (hIconCapsOn)    DestroyIcon(hIconCapsOn);
-	if (hIconCapsOff)   DestroyIcon(hIconCapsOff);
-	if (hIconNumOn)     DestroyIcon(hIconNumOn);
-	if (hIconNumOff)     DestroyIcon(hIconNumOff);
-	if (hIconScrollOn)  DestroyIcon(hIconScrollOn);
-	if (hIconScrollOff)  DestroyIcon(hIconScrollOff);
+static void unloadTrayIcons() {
+	if (trayCaps.hIconOn)    DestroyIcon(trayCaps.hIconOn);
+	if (trayCaps.hIconOff)   DestroyIcon(trayCaps.hIconOff);
+	if (trayNum.hIconOn)     DestroyIcon(trayNum.hIconOn);
+	if (trayNum.hIconOff)     DestroyIcon(trayNum.hIconOff);
+	if (trayScroll.hIconOn)  DestroyIcon(trayScroll.hIconOn);
+	if (trayScroll.hIconOff)  DestroyIcon(trayScroll.hIconOff);
 }
 
-static void ShowIconStatus(NOTIFYICONDATAW* nid, BOOL bShow, HICON hIcon) {
-	if (bShow) {
-		nid->hIcon = hIcon;
-		Shell_NotifyIcon(NIM_ADD, nid);
+static void TrayIconInit(TRAYICON* t, HWND hWnd, UINT id,  UINT keyId) {
+	if (!t) return;
+	//ZeroMemory(t, sizeof(*t));
+	t->nid.cbSize = sizeof(NOTIFYICONDATAW);
+	t->nid.hWnd = hWnd;
+	t->nid.uID = id;
+	t->nid.uCallbackMessage = WM_TRAYICON;
+	t->nid.uFlags = NIF_ICON | NIF_MESSAGE;
+	t->isVisible = GetKeyStatusConfig(id == TRAY_ID_CAPS ? L"caps" : id == TRAY_ID_NUM ? L"num" : L"scroll");
+	t->keyId = keyId;
+	t->keyStatePrev = FALSE;
+	t->added = FALSE;
+}
+
+static void ShowTrayIconStatus(TRAYICON* ti) {
+	if (ti->isVisible) {
+		BOOL bCurrentStatus = (GetKeyState(ti->keyId) & 0x0001);
+		
+		ti->nid.hIcon = bCurrentStatus ? ti->hIconOn: ti->hIconOff;
+
+		if (!ti->added) {
+			if (Shell_NotifyIconW(NIM_ADD, &ti->nid))
+				ti->added = TRUE;
+			else {
+				DWORD err = GetLastError();
+				OutputDebugStringW(L"Shell_NotifyIcon NIM_ADD falló\n");
+			}
+		}
+		else {
+			Shell_NotifyIconW(NIM_MODIFY, &ti->nid);
+		}
 	}
 	else {
-		Shell_NotifyIcon(NIM_DELETE, nid);
-		nid->hIcon = NULL;
+		if (ti->added) {
+			Shell_NotifyIconW(NIM_DELETE, &ti->nid);
+			ti->added = FALSE;
+		}
+		ti->nid.hIcon = NULL;
 	}
 }
 
-static void ShowTrayIcons(BOOL isInit) {
-	capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
-	numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
-	scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
-
-	ShowIconStatus(&nidCaps, getKeyStatusConfig(L"caps"), capsLock ? hIconCapsOn : hIconCapsOff);
-	ShowIconStatus(&nidNum, getKeyStatusConfig(L"num"), numLock ? hIconNumOn : hIconNumOff);
-	ShowIconStatus(&nidScroll, getKeyStatusConfig(L"scroll"), scrollLock ? hIconScrollOn : hIconScrollOff);
+static void ShowTrayIcons() {
+	ShowTrayIconStatus(&trayCaps);
+	ShowTrayIconStatus(&trayNum);	
+	ShowTrayIconStatus(&trayScroll);
 }
 
+static void UpdateTrayIcon(TRAYICON* ti) {
+	if (ti->isVisible) {
 
-static void updateIcon(NOTIFYICONDATAW* nid, LPCWSTR szKeyDescriptor, BOOL bCurrentStatus, HICON hIconKeyOn, HICON hIconKeyOff) {
-	nid->hIcon = (bCurrentStatus ? hIconKeyOn : hIconKeyOff);
-	Shell_NotifyIcon(NIM_MODIFY, nid);
-	PlaySound(bCurrentStatus ? MAKEINTRESOURCE(IDR_KEYON) : MAKEINTRESOURCE(IDR_KEYOFF), hInst, SND_ASYNC | SND_RESOURCE);
+		BOOL bCurrentStatus = (GetKeyState(ti->keyId) & 0x0001);
+		ti->nid.hIcon = (bCurrentStatus ? ti->hIconOn : ti->hIconOff);
+		Shell_NotifyIcon(NIM_MODIFY, &ti->nid);
+		if (IsSoundActiveConfig()) {
+			PlaySound(bCurrentStatus ? MAKEINTRESOURCE(IDR_KEYON) : MAKEINTRESOURCE(IDR_KEYOFF), hInst, SND_ASYNC | SND_RESOURCE);
+		}
+	}
 }
 
 
 static void UpdateTrayIcons() {
-	capsLock = (GetKeyState(VK_CAPITAL) & 0x0001);
-	numLock = (GetKeyState(VK_NUMLOCK) & 0x0001);
-	scrollLock = (GetKeyState(VK_SCROLL) & 0x0001);
-
-	if (capsLock != capsLockPrev) {
-		if(getKeyStatusConfig(L"caps"))
-			updateIcon(&nidCaps, L"caps", capsLock, hIconCapsOn, hIconCapsOff);
-		capsLockPrev = capsLock;
+	if (ISCAPSLOCKON != trayCaps.keyStatePrev) {
+		UpdateTrayIcon(&trayCaps);
+		trayCaps.keyStatePrev  = ISCAPSLOCKON;
 	}
-	if (numLock != numLockPrev) {
-		if(getKeyStatusConfig(L"num"))
-			updateIcon(&nidNum, L"num", numLock, hIconNumOn, hIconNumOff);
-		numLockPrev = numLock;
+	if (ISNUMLOCKON != trayNum.keyStatePrev) {
+		UpdateTrayIcon(&trayNum);
+		trayNum.keyStatePrev = ISNUMLOCKON;
 	}
-	if (scrollLock != scrollLockPrev) {
-		if (getKeyStatusConfig(L"scroll"))
-			updateIcon(&nidScroll, L"scroll", scrollLock, hIconScrollOn, hIconScrollOff);
-		scrollLockPrev = scrollLock;
+	if (ISSCROLLLOCKON != trayScroll.keyStatePrev) {
+		UpdateTrayIcon(&trayScroll);
+		trayScroll.keyStatePrev = ISSCROLLLOCKON;
 	}
 }
 
@@ -552,9 +599,9 @@ INT_PTR CALLBACK ConfigDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
 		}
 
 
-		CheckDlgButton(hDlg, IDC_SHOW_CAPS, getKeyStatusConfig(L"caps") ? BST_CHECKED : BST_UNCHECKED);
-		CheckDlgButton(hDlg, IDC_SHOW_NUM, getKeyStatusConfig(L"num") ? BST_CHECKED : BST_UNCHECKED);
-		CheckDlgButton(hDlg, IDC_SHOW_SCROLL, getKeyStatusConfig(L"scroll") ? BST_CHECKED : BST_UNCHECKED);
+		CheckDlgButton(hDlg, IDC_SHOW_CAPS, trayCaps.isVisible ? BST_CHECKED : BST_UNCHECKED);
+		CheckDlgButton(hDlg, IDC_SHOW_NUM, trayNum.isVisible ? BST_CHECKED : BST_UNCHECKED);
+		CheckDlgButton(hDlg, IDC_SHOW_SCROLL, trayScroll.isVisible ? BST_CHECKED : BST_UNCHECKED);
 		return TRUE;
 
 	case WM_COMMAND:
@@ -569,9 +616,15 @@ INT_PTR CALLBACK ConfigDialogProc(HWND hDlg, UINT message, WPARAM wParam, LPARAM
 				return TRUE;
 			}
 
-			setKeyStatus(L"caps", IsDlgButtonChecked(hDlg, IDC_SHOW_CAPS));
-			setKeyStatus(L"num", IsDlgButtonChecked(hDlg, IDC_SHOW_NUM));
-			setKeyStatus(L"scroll", IsDlgButtonChecked(hDlg, IDC_SHOW_SCROLL));
+			trayCaps.isVisible = IsDlgButtonChecked(hDlg, IDC_SHOW_CAPS);
+			trayCaps.keyStatePrev = ISCAPSLOCKON;
+
+			trayNum.isVisible = IsDlgButtonChecked(hDlg, IDC_SHOW_NUM);
+			trayNum.keyStatePrev = ISNUMLOCKON; // actualizar estado previo para forzar repintado
+
+			trayScroll.isVisible = IsDlgButtonChecked(hDlg, IDC_SHOW_SCROLL);
+			trayScroll.keyStatePrev = ISSCROLLLOCKON; // actualizar estado previo para forzar repintado
+
 			EndDialog(hDlg, IDOK);
 			return TRUE;
 		case IDCANCEL:
