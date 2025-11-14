@@ -24,6 +24,8 @@
 // about the project and latest updates.
 
 #include <stdint.h>
+#include <shlobj.h>   // SHGetFolderPathW
+#include <strsafe.h>
 
 #include "config.h"
 #include "stringutils.h"
@@ -37,7 +39,8 @@
 #define CFGERROR_PARSEERROR			7
 #define CFGERROR_WRITEERROR			8
 #define CFGERROR_NOTDEFAULTCONFIG	9
-
+#define CFGERROR_NOTUSERPATH		10
+#define CFGERROR_CANTCOPYDEFAULT    11
 
 static BOOL ProcessConfigLine(LPWSTR lpszParseLine);
 static BOOL ParseKeyStatus(LPWSTR lpszParseLine);
@@ -45,7 +48,8 @@ static BOOL ParseVariableConfigLine(LPWSTR lpszParseLine);
 static BOOL ParseLanguageConfigLine(LPWSTR lpszParseLine);
 static BOOL _WriteFileAsUtf8(HANDLE hFile, LPCWSTR lpszToWrite);
 static BOOL CompareConfig(const CONFIG_STAT* newConfig, const CONFIG_STAT* oldConfig);
-
+static BOOL GetUserConfigPath(LPWSTR outPath, size_t cchOut);
+static BOOL GetDefaultConfigPath(LPWSTR lpszPath, size_t cchOut);
 
 /* Definición única de la variable global */
 CONFIG_STAT g_configStat =
@@ -61,23 +65,41 @@ CONFIG_STAT g_configStat =
 
 CONFIG_STAT g_configStatLoaded = { 0 }; // To keep track of loaded config
 
-INT LoadConfig(LPWSTR lpszPath) {
+/*
+* LoadConfig
+* 
+* loads the configuration from the user config file.
+* If initially doesnt exist, copies the default config to user path
+*/
+INT LoadConfig() {
 	int iErrno = 0;
 	LPSTR lpszBuffer = NULL; // Buffer to store read data
 	DWORD dwBytesRead; // Number of bytes read
 
-	// If its null , use the default config file
-	if (lpszPath == NULL) {
-		lpszPath = GetDefaultConfigPath();
+	WCHAR userCfgPath[MAX_PATH];
+	if (!GetUserConfigPath(userCfgPath, MAX_PATH)) return CFGERROR_NOTUSERPATH;
+
+	// if not exists copy default
+	DWORD attrs = GetFileAttributesW(userCfgPath);
+	if (attrs == INVALID_FILE_ATTRIBUTES) { 
+		WCHAR defaultCfgPath[MAX_PATH];
+
+		if (!GetDefaultConfigPath(defaultCfgPath, MAX_PATH)) {
+			return CFGERROR_NOTDEFAULTCONFIG;
+		}
+
+		// copy default to user path
+		if (!CopyFileW(defaultCfgPath, userCfgPath, FALSE)) {
+			return CFGERROR_CANTCOPYDEFAULT;
+		}
 	}
 
-	if (lpszPath == NULL) {
-		return CFGERROR_NOTDEFAULTCONFIG;
-	}
+
+	//MessageBox(NULL, userCfgPath, L"User config path", MB_OK);
 
 	// Open the existing file
 	HANDLE hFile = CreateFile(
-		lpszPath,                   // File name
+		userCfgPath,                   // File name
 		GENERIC_READ,               // Access mode (read-only)
 		FILE_SHARE_READ,            // Share mode
 		NULL,                       // Security attributes
@@ -85,10 +107,6 @@ INT LoadConfig(LPWSTR lpszPath) {
 		FILE_ATTRIBUTE_NORMAL,      // File attributes
 		NULL                        // Template file (not used for existing files)
 	);
-
-	// freee memory
-	free(lpszPath);
-	lpszPath = NULL;
 
 
 	if (hFile == INVALID_HANDLE_VALUE) {
@@ -381,42 +399,60 @@ static BOOL ParseLanguageConfigLine(LPWSTR lpszParseLine) {
 }
 
 
-
-INT SaveConfig(LPWSTR lpszPath) {
+/* 
+* SaveConfig
+* 
+* saves the current configuration to the user config file if there are changes
+* int the configuration.
+*/
+INT SaveConfig() {
 	BOOL bWriteError = FALSE;
 	DWORD dwBytesWritten;
 	WCHAR szWorkBuffer[1024] = L"\0";
 
 	if (CompareConfig(&g_configStat, &g_configStatLoaded)) {
+		//MessageBox(NULL,L"Save config, no hubo cambios",L"Config Error",MB_OK);
 		// No changes , no need to save
 		return 0;
 	}
 
-	// If its null , use the default config file
-	if (lpszPath == NULL) {
-		lpszPath = GetDefaultConfigPath();
-	}
+	WCHAR userCfgPath[MAX_PATH];
+	if (!GetUserConfigPath(userCfgPath, MAX_PATH)) return CFGERROR_NOTDEFAULTCONFIG;
 
-	if (lpszPath == NULL) {
-		return CFGERROR_NOTDEFAULTCONFIG;
-	}
 
 	// Open the existing file
 	HANDLE hFile = CreateFile(
-		lpszPath,                   // File name
+		userCfgPath,                   // File name
 		GENERIC_WRITE,               // Access mode (write-only)
 		0,							 // Not shared
 		NULL,                       // Security attributes
 		OPEN_EXISTING,              // Open only if exists
 		FILE_ATTRIBUTE_NORMAL,      // File attributes
 		NULL
-	);
+	); 
 
-	// freee memory
-	free(lpszPath);
-	lpszPath = NULL;
-
+	 
 	if (hFile == INVALID_HANDLE_VALUE) {
+		DWORD dwError = GetLastError();
+		WCHAR szErrorMsg[256];
+
+		FormatMessageW(
+			FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+			NULL,
+			dwError,
+			0, // idioma por defecto
+			szErrorMsg,
+			ARRAYSIZE(szErrorMsg),
+			NULL
+		);
+
+	//	WCHAR szFinalMsg[512];
+	//	StringCchPrintfW(szFinalMsg, ARRAYSIZE(szFinalMsg),
+	//		L"Save config, invalid handle.\nError %lu: %s",
+	//		dwError, szErrorMsg);
+
+	//	MessageBoxW(NULL, szFinalMsg, L"Config Error", MB_OK | MB_ICONERROR);
+
 		return CFGERROR_FILEOPENERROR;
 	}
 
@@ -479,6 +515,8 @@ INT SaveConfig(LPWSTR lpszPath) {
 	}
 
 	if (!bWriteError) {
+		//MessageBox(NULL, L"Save config, error de grabacion", L"Config Error", MB_OK);
+
 		return CFGERROR_WRITEERROR;
 	}
 
@@ -531,34 +569,68 @@ static BOOL _WriteFileAsUtf8(HANDLE hFile, LPCWSTR lpszToWrite) {
 	return bOk;
 }
 
+/*
+ * GetDefaultConfigPath
+ * 
+ * Gets the path of the default configuration file (next to executable).
+ * 
+ */ 
+static BOOL GetDefaultConfigPath(LPWSTR lpszPath, size_t cchOut) {
+	DWORD length = GetModuleFileName(NULL, lpszPath, MAX_PATH);
 
-LPWSTR GetDefaultConfigPath() {
-	LPWSTR lpszPath = (LPWSTR)calloc(1, MAX_PATH * sizeof(WCHAR));
-
-	if (lpszPath != NULL) {
-		DWORD length = GetModuleFileName(NULL, lpszPath, MAX_PATH);
-
-		if (length == 0) {
-			return NULL;
-		}
-
-		// Remove the executable name to get the directory
-		LPWSTR lpszLastBackslash = wcsrchr(lpszPath, L'\\');
-		if (lpszLastBackslash != NULL) {
-			*lpszLastBackslash = L'\0';
-		}
-
-		// Now add the config file part
-		LPCWSTR lpszConfigFilePart = L"\\config.cfg";
-
-		if (wcscat_s(lpszPath, MAX_PATH, lpszConfigFilePart) != 0) {
-			return NULL;
-		}
-
-
+	if (length == 0) {
+		return FALSE;
 	}
-	// Free memory outside is not null!!!!!!!!
-	return lpszPath;
+
+	// Remove the executable name to get the directory
+	LPWSTR lpszLastBackslash = wcsrchr(lpszPath, L'\\');
+	if (lpszLastBackslash != NULL) {
+		*lpszLastBackslash = L'\0';
+	}
+
+	// Now add the config file part
+	LPCWSTR lpszConfigFilePart = L"\\config.cfg";
+
+	if (wcscat_s(lpszPath, MAX_PATH, lpszConfigFilePart) != 0) {
+		return FALSE;
+	}
+
+	return TRUE;
+}
+
+/*
+ * GetUserConfigPath
+ * 
+ * Gets the path of the configuration file in the user's directory.
+ * If it does not exist, creates the necessary directories and returns the path.
+ * 
+ */
+BOOL GetUserConfigPath(LPWSTR outPath, size_t cchOut) {
+	if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, outPath))) {
+		return FALSE;
+	}
+
+	wcscat_s(outPath, cchOut, L"\\CarSoft\\keystat\\config.cfg");
+	DWORD attrs = GetFileAttributesW(outPath);
+
+	// if not exist create directories and config file in user directory
+	if (attrs == INVALID_FILE_ATTRIBUTES) {
+		if (FAILED(SHGetFolderPathW(NULL, CSIDL_APPDATA, NULL, 0, outPath))) {
+			return FALSE;
+		}
+
+		// %APPDATA%\TuVendor\TuApp
+		wcscat_s(outPath, cchOut, L"\\CarSoft");
+		CreateDirectoryW(outPath, NULL); // idempotente
+
+		wcscat_s(outPath, cchOut, L"\\keystat");
+		CreateDirectoryW(outPath, NULL); // idempotente
+
+		// %APPDATA%\TuVendor\TuApp\config.cfg
+		wcscat_s(outPath, cchOut, L"\\config.cfg");
+	}
+
+	return TRUE;
 }
 
 
@@ -608,6 +680,13 @@ VOID SetConfigLanguage(LPWSTR lpszLangDescriptor) {
 	setDefaultLanguage(lpszLangDescriptor);
 }
 
+/*
+ * CompareConfig
+ * 
+ * Compares two CONFIG_STAT structures to determine if they are identical.
+ * This is useful to avoid unnecessary writes to the configuration file.
+ * 
+ */ 
 BOOL CompareConfig(const CONFIG_STAT* newConfig, const CONFIG_STAT* oldConfig) {
 	if (newConfig->soundOn == oldConfig->soundOn &&
 		!lstrcmp(newConfig->szDefaultLang, oldConfig->szDefaultLang) &&

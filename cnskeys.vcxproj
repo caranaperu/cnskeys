@@ -156,25 +156,16 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="app.ico" />
-    <Image Include="C:\Users\arana\Downloads\capsoff.ico" />
-    <Image Include="C:\Users\arana\Downloads\capson.ico" />
-    <Image Include="C:\Users\arana\Downloads\numoff.ico" />
-    <Image Include="C:\Users\arana\Downloads\numon.ico" />
-    <Image Include="C:\Users\arana\Downloads\scrolloff.ico" />
-    <Image Include="C:\Users\arana\Downloads\scrollon.ico" />
-    <Image Include="capsoff.ico" />
-    <Image Include="capson.ico" />
     <Image Include="cnskeys.ico" />
     <Image Include="letra_c.ico" />
+    <Image Include="letra_c_clear.ico" />
     <Image Include="letra_c_off.ico" />
     <Image Include="letra_n.ico" />
+    <Image Include="letra_n_clear.ico" />
     <Image Include="letra_n_off.ico" />
     <Image Include="letra_s.ico" />
+    <Image Include="letra_s_clear.ico" />
     <Image Include="letra_s_off.ico" />
-    <Image Include="numoff.ico" />
-    <Image Include="numon.ico" />
-    <Image Include="scrolloff.ico" />
-    <Image Include="scrollon.ico" />
   </ItemGroup>
   <ItemGroup>
     <Media Include="keyoff.wav" />

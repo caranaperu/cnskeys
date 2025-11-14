@@ -18,9 +18,6 @@ typedef struct {
 	WCHAR szDefaultLang[LANG_MAXDESC_LENGTH + 1];
 } CONFIG_STAT;
 
-INT LoadConfig(LPWSTR lpszPath);
-INT SaveConfig(LPWSTR lpszPath);
-LPWSTR GetDefaultConfigPath();
 
 enum keyStatusEnum {
 	KEYSTAT_CAPS = 0,
@@ -33,6 +30,9 @@ BOOL SetKeyStatusConfig(LPCWSTR lpszKeyStatDescriptor, BOOL isStatusOn);
 BOOL IsSoundActiveConfig();
 VOID SetConfigLanguage(LPWSTR lpszLangDescriptor);
 VOID SetSoundActiveConfig(BOOL bSoundOn);
+INT LoadConfig();
+INT SaveConfig();
+
 
 //extern CONFIG_KEYSTAT g_configStat.keyStatus[3];
 //extern CONFIG_STAT g_configStat;

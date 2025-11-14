@@ -90,7 +90,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 
 	// Load config file
-	if (LoadConfig(NULL) != 0) {
+	if (LoadConfig() != 0) {
 		invalidConfigMessageBox();
 		exit(-3);
 	}
@@ -123,7 +123,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 		wchar_t buf[128];
 		swprintf_s(buf, _countof(buf), L"CreateWindowEx fallo: %u", err);
 		MessageBoxW(NULL, buf, L"Init error", MB_OK | MB_ICONERROR);
-		return FALSE;
+			return FALSE;
 	}
 
 	// Inicializo variables
@@ -337,7 +337,7 @@ static void EndApp() {
 	SetKeyStatusConfig(L"num", trayNum.isVisible);
 	SetKeyStatusConfig(L"scroll", trayScroll.isVisible);
 
-	if (SaveConfig(NULL)) {
+	if (SaveConfig()) {
 		// Config failed , nada que hacer quedara como esta
 		OutputDebugStringW(L"Warning: SaveConfig failed\n");
 	}
